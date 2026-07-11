@@ -1,2 +1,31 @@
-dist/PDF_to_Presentation_Converter.exe
-dist/PDF_to_Presentation_Converter_v2.exe
+# Secrets — never commit environment files
+.env
+.env.*
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build / distribution artifacts
+build/
+dist/
+*.spec
+*.rar
+
+# Generated output
+output/
+runs/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
