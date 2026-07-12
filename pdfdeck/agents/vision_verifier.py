@@ -93,12 +93,11 @@ class ClaudeVisionVerifier:
         from langchain_anthropic import ChatAnthropic
 
         self.model = model or settings.vision_model
-        self._llm = ChatAnthropic(
-            model=self.model,
-            api_key=api_key or settings.anthropic_api_key or None,
-            temperature=0,
-            max_tokens=1024,
-        ).with_structured_output(VerificationResult)
+        kwargs: dict = {"model": self.model, "temperature": 0, "max_tokens": 1024}
+        key = api_key or settings.anthropic_api_key
+        if key:  # else ChatAnthropic reads ANTHROPIC_API_KEY from the env
+            kwargs["api_key"] = key
+        self._llm = ChatAnthropic(**kwargs).with_structured_output(VerificationResult)
         self.last_usage: dict | None = None
 
     def verify(
