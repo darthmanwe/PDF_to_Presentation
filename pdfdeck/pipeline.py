@@ -1,25 +1,47 @@
 """Pipeline entrypoint: convert one PDF to a deck.
 
 Wires the injectable dependencies (vision verifier, content agent, fidelity
-critic, translator, page provider) and invokes the top-level graph. Real
+critic, translator, page provider) and runs the top-level graph. Real
 Claude/Azure implementations are built lazily only when not injected, so
 tests pass Fakes and never touch the network.
+
+Two entrypoints share the same setup:
+- `convert_pdf`    -- one blocking call, returns the result (CLI, tests).
+- `iter_convert`   -- a generator yielding ("node", name) progress events and
+                       a final ("done", result), for the streaming UI.
 """
 
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Iterator, Optional
 
 from pdfdeck.config import settings
 from pdfdeck.graph.build import build_pipeline
 from pdfdeck.models import QAReport
 from pdfdeck.pdfdoc import PageProvider
-from pdfdeck.telemetry import get_logger
+from pdfdeck.telemetry import estimate_cost_usd, get_logger
 
 log = get_logger(__name__)
+
+# Reducer-annotated state keys (see graph/state.py): accumulate across the
+# figure fan-out rather than overwrite when reconstructing state from a stream.
+_REDUCER_KEYS = {"figures", "best_effort", "no_vision", "dropped"}
+
+# Friendly labels for streaming progress in the UI.
+NODE_LABELS = {
+    "ingest": "Reading PDF and extracting text",
+    "detect": "Detecting figure regions",
+    "process_region": "Verifying a figure crop (vision agent)",
+    "gather": "Collecting figures",
+    "content": "Drafting grounded slides (plan -> draft -> critique)",
+    "translate": "Translating",
+    "assemble": "Building the presentation",
+    "qa": "Finalizing and writing the QA report",
+}
 
 
 @dataclass
@@ -27,17 +49,23 @@ class ConversionResult:
     output_path: str
     run_dir: str
     report: QAReport
-    slides: list
-    figures: list
+    slides: list = field(default_factory=list)
+    figures: list = field(default_factory=list)
+
+
+@dataclass
+class _Run:
+    graph: object
+    state_in: dict
+    config: dict
+    report: QAReport
+    provider: PageProvider
+    owns_provider: bool
+    run_dir: str
 
 
 def _finalize_cost(report: QAReport, usage_metadata: dict, run_dir: str) -> None:
     """Sum per-model token usage into the QA report and re-write the json."""
-    import json
-    import os
-
-    from pdfdeck.telemetry import estimate_cost_usd
-
     total_in = total_out = 0
     cost = 0.0
     for model, usage in (usage_metadata or {}).items():
@@ -55,19 +83,10 @@ def _finalize_cost(report: QAReport, usage_metadata: dict, run_dir: str) -> None
             json.dump(report.model_dump(), f, indent=2)
 
 
-def convert_pdf(
-    pdf_path: str,
-    target_language: Optional[str] = None,
-    vision_enabled: bool = True,
-    output_path: Optional[str] = None,
-    run_dir: Optional[str] = None,
-    *,
-    verifier=None,
-    content_agent=None,
-    critic=None,
-    translator=None,
-    page_provider: Optional[PageProvider] = None,
-) -> ConversionResult:
+def _prepare(
+    pdf_path, target_language, vision_enabled, output_path, run_dir,
+    verifier, content_agent, critic, translator, page_provider,
+) -> _Run:
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(pdf_path)
 
@@ -118,25 +137,79 @@ def convert_pdf(
         "max_retries": settings.max_figure_retries,
         "output_path": output_path,
     }
+    return _Run(build_pipeline(), state_in, config, report, provider, owns_provider, run_dir)
 
-    graph = build_pipeline()
+
+def _result(run: _Run, state: dict) -> ConversionResult:
+    return ConversionResult(
+        output_path=state.get("output_path", ""),
+        run_dir=run.run_dir,
+        report=run.report,
+        slides=state.get("slides", []),
+        figures=sorted(state.get("figures", []), key=lambda f: (f.page_index, f.region_id)),
+    )
+
+
+def convert_pdf(
+    pdf_path: str,
+    target_language: Optional[str] = None,
+    vision_enabled: bool = True,
+    output_path: Optional[str] = None,
+    run_dir: Optional[str] = None,
+    *,
+    verifier=None,
+    content_agent=None,
+    critic=None,
+    translator=None,
+    page_provider: Optional[PageProvider] = None,
+) -> ConversionResult:
+    run = _prepare(pdf_path, target_language, vision_enabled, output_path, run_dir,
+                   verifier, content_agent, critic, translator, page_provider)
     try:
-        # Capture token usage across every LLM call in the run (content agent,
-        # critic, vision verifier) via contextvars -- works through
-        # with_structured_output, which otherwise hides the raw usage.
         from langchain_core.callbacks import get_usage_metadata_callback
 
         with get_usage_metadata_callback() as usage_cb:
-            final = graph.invoke(state_in, config)
-        _finalize_cost(report, usage_cb.usage_metadata, run_dir)
+            final = run.graph.invoke(run.state_in, run.config)
+        _finalize_cost(run.report, usage_cb.usage_metadata, run.run_dir)
     finally:
-        if owns_provider:
-            provider.close()
+        if run.owns_provider:
+            run.provider.close()
+    return _result(run, final)
 
-    return ConversionResult(
-        output_path=final.get("output_path", ""),
-        run_dir=run_dir,
-        report=report,
-        slides=final.get("slides", []),
-        figures=sorted(final.get("figures", []), key=lambda f: (f.page_index, f.region_id)),
-    )
+
+def iter_convert(
+    pdf_path: str,
+    target_language: Optional[str] = None,
+    vision_enabled: bool = True,
+    output_path: Optional[str] = None,
+    run_dir: Optional[str] = None,
+    *,
+    verifier=None,
+    content_agent=None,
+    critic=None,
+    translator=None,
+    page_provider: Optional[PageProvider] = None,
+) -> Iterator[tuple]:
+    """Stream the pipeline. Yields ('node', name) per graph step, then
+    ('done', ConversionResult). Reconstructs final state from the update
+    stream, honoring the fan-out reducers."""
+    run = _prepare(pdf_path, target_language, vision_enabled, output_path, run_dir,
+                   verifier, content_agent, critic, translator, page_provider)
+    acc = dict(run.state_in)
+    try:
+        from langchain_core.callbacks import get_usage_metadata_callback
+
+        with get_usage_metadata_callback() as usage_cb:
+            for update in run.graph.stream(run.state_in, run.config, stream_mode="updates"):
+                for node, delta in update.items():
+                    for k, v in (delta or {}).items():
+                        if k in _REDUCER_KEYS:
+                            acc[k] = acc.get(k, []) + list(v)
+                        else:
+                            acc[k] = v
+                    yield ("node", node)
+        _finalize_cost(run.report, usage_cb.usage_metadata, run.run_dir)
+    finally:
+        if run.owns_provider:
+            run.provider.close()
+    yield ("done", _result(run, acc))
