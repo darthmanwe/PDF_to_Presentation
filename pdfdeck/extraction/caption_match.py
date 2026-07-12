@@ -13,12 +13,49 @@ from dataclasses import dataclass
 
 from pdfdeck.models import Rect, TextBlock
 
-# Caption must START the block: "Figure 4.12 ...", "FIGURE 4.12.", "Fig. 4.12"
+# Caption must START the block. Case-insensitive so all-caps abbreviations
+# ("FIG. 2.24", the form Robbins uses) match alongside "Figure 4.12" / "Fig 4.12".
+# Anchored at block start, so inline references ("...see Fig. 2.16...") never match.
 _CAPTION_RE = re.compile(
-    r"^\s*(?:FIGURE|Figure|Fig\.)\s+(\d+(?:[.\-]\d+)?[A-Z]?)\b", re.UNICODE
+    r"^\s*(?:figure|fig\.?)\s+(\d+(?:[.\-]\d+)?[A-Za-z]?)\b", re.IGNORECASE | re.UNICODE
 )
 # Table captions handled the same way (rendered regions may be tables).
-_TABLE_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(\d+(?:[.\-]\d+)?)\b", re.UNICODE)
+_TABLE_RE = re.compile(r"^\s*table\s+(\d+(?:[.\-]\d+)?)\b", re.IGNORECASE | re.UNICODE)
+
+
+# f-ligatures survive PDF text extraction ("inﬂammation"); normalize them.
+_LIGATURES = str.maketrans(
+    {"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi",
+     "ﬄ": "ffl", "ﬅ": "ft", "ﬆ": "st"}
+)
+
+
+def clean_caption(text: str) -> str:
+    """Normalize a caption for display: fix f-ligatures, de-hyphenate soft
+    line-break hyphens ('forma- tion' -> 'formation'), collapse whitespace."""
+    text = text.translate(_LIGATURES)
+    text = re.sub(r"(\w)-\s+(\w)", r"\1\2", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def caption_title(caption: str | None, max_len: int = 150) -> str | None:
+    """Promote a caption to a slide title: the label + its first sentence,
+    verbatim and de-hyphenated. 'Table 2.10 Growth Factors' stays whole;
+    'FIG. 2.24 Healing wound. (A) ...' becomes 'FIG. 2.24 Healing wound.'"""
+    if not caption:
+        return None
+    text = clean_caption(caption)
+    m = _CAPTION_RE.match(text) or _TABLE_RE.match(text)
+    if m:
+        head = text[: m.end()]                       # "FIG. 2.24"
+        rest = text[m.end():].lstrip()               # "Healing wound. (A) ..."
+        first = re.split(r"(?<=\.)\s", rest, maxsplit=1)[0] if rest else ""
+        title = (head + " " + first).strip()
+    else:
+        title = text
+    if len(title) > max_len:
+        title = title[: max_len - 1].rstrip() + "…"
+    return title
 
 
 def find_caption_blocks(blocks: list[TextBlock]) -> list[TextBlock]:
@@ -73,14 +110,20 @@ def associate_captions(
         for ci, cap in enumerate(captions):
             if _x_overlap_frac(rb, cap.bbox) < 0.3:
                 continue
-            if cap.bbox.y0 >= rb.y1 - 2:            # below the region
-                gap = cap.bbox.y0 - rb.y1
+            # Tolerate a caption whose top edge dips slightly into the region's
+            # bottom (common: the figure art's bbox overlaps the caption's first
+            # line by a few points). Slack = half the caption's height, so a
+            # bottom caption still reads as "below" while a caption bisecting the
+            # figure mid-height does not (the split step handles that).
+            slack = max(4.0, 0.5 * cap.bbox.height)
+            if cap.bbox.y0 >= rb.y1 - slack:        # below the region
+                gap = max(0.0, cap.bbox.y0 - rb.y1)
                 position = "below"
-            elif cap.bbox.y1 <= rb.y0 + 2:          # above the region
-                gap = rb.y0 - cap.bbox.y1
+            elif cap.bbox.y1 <= rb.y0 + slack:      # above the region
+                gap = max(0.0, rb.y0 - cap.bbox.y1)
                 position = "above"
             else:
-                continue  # caption inside region: split step handles that case
+                continue  # caption bisects the region: split step handles it
             if gap > max_gap_pt:
                 continue
             # Below beats above at equal distance.

@@ -71,8 +71,14 @@ def convert_pdf(
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(pdf_path)
 
-    run_dir = run_dir or os.path.join("runs", datetime.now().strftime("%Y%m%d_%H%M%S"))
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = run_dir or os.path.join("runs", ts)
     os.makedirs(os.path.join(run_dir, "figures"), exist_ok=True)
+
+    # Default deck name reflects the source PDF + a timestamp (not "deck.pptx").
+    if output_path is None:
+        stem = os.path.splitext(os.path.basename(pdf_path))[0]
+        output_path = os.path.join(run_dir, f"{stem}_{ts}.pptx")
 
     owns_provider = page_provider is None
     provider = page_provider or PageProvider()

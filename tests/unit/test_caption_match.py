@@ -3,6 +3,8 @@
 from pdfdeck.extraction.caption_match import (
     associate_captions,
     caption_figure_no,
+    caption_title,
+    clean_caption,
     find_caption_blocks,
 )
 from pdfdeck.models import Rect, TextBlock
@@ -29,8 +31,39 @@ def test_inline_reference_not_a_caption():
 
 
 def test_variants_detected():
-    for text in ("FIGURE 3.1 X.", "Fig. 4.12 Y.", "Table 2.1 Z.", "Figure 4-2 W."):
+    # "FIG." (all-caps) is the form Robbins uses -- the regression this fixes.
+    for text in ("FIGURE 3.1 X.", "Fig. 4.12 Y.", "Table 2.1 Z.", "Figure 4-2 W.",
+                 "FIG. 2.24 Healing wound.", "FIG 2.20 Mechanisms.", "Fig 3.1 Z."):
         assert find_caption_blocks([_block(text)]), text
+
+
+def test_caption_title_first_sentence():
+    cap = ("FIG. 2.24 Healing wound. (A) Granulation tissue showing numerous "
+           "blood vessels and a loose matrix. (B) Trichrome stain of mature scar.")
+    assert caption_title(cap) == "FIG. 2.24 Healing wound."
+
+
+def test_caption_title_short_table_kept_whole():
+    assert caption_title("Table 2.10 Growth Factors") == "Table 2.10 Growth Factors"
+
+
+def test_caption_title_dehyphenates():
+    assert caption_title("FIG. 2.20 Mechanisms of scar forma- tion.") == \
+        "FIG. 2.20 Mechanisms of scar formation."
+
+
+def test_caption_title_none_passthrough():
+    assert caption_title(None) is None
+
+
+def test_caption_title_truncates_runaway():
+    cap = "FIG. 9.9 " + "x" * 300  # no sentence break
+    out = caption_title(cap, max_len=150)
+    assert len(out) <= 150 and out.endswith("…")
+
+
+def test_clean_caption_collapses_whitespace():
+    assert clean_caption("Figure  2.1\n  Repair\tprocess") == "Figure 2.1 Repair process"
 
 
 def test_figure_no_extraction():

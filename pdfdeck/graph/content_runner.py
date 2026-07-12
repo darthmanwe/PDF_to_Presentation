@@ -13,6 +13,7 @@ from pdfdeck.agents.content_agent import (
     FidelityCritic,
     FigureRef,
 )
+from pdfdeck.extraction.caption_match import caption_title, clean_caption
 from pdfdeck.config import settings
 from pdfdeck.graph.content_agent import build_content_subgraph
 from pdfdeck.models import Figure, PageModel, QAReport, SlideSpec
@@ -36,14 +37,19 @@ def build_source_blocks(pages: list[PageModel]) -> tuple[str, list[str]]:
 
 
 def _figure_slide(idx: int, fig: Figure) -> SlideSpec:
-    title = f"Figure {fig.figure_no}" if fig.figure_no else "Figure"
+    # The caption (verbatim, de-hyphenated) becomes the slide title; it is also
+    # preserved as the subtitle beneath the figure. Falls back to the figure
+    # number, then a generic label, when no caption was detected.
+    title = caption_title(fig.caption)
+    if not title:
+        title = f"Figure {fig.figure_no}" if fig.figure_no else "Figure"
     return SlideSpec(
         index=idx,
         title=title,
         slide_type="figure",
         figure_ref=fig.region_id,
         image_path=fig.image_path,
-        caption=fig.caption,
+        caption=clean_caption(fig.caption) if fig.caption else None,
         flags=[] if fig.status.value in ("verified", "unverified") else [fig.status.value],
     )
 
