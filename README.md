@@ -1,165 +1,67 @@
-# PDF to Presentation Converter
+# pdfdeck
 
-Transform medical PDFs into professional presentations using AI-powered content analysis and generation.
+Turn a medical-textbook PDF excerpt (5–10 pages) into a student presentation deck: the chapter's **figures extracted cleanly** and interleaved with **grounded, fidelity-checked text slides**, optionally translated to Turkish.
 
-## 🚀 Features
+Built as an **agentic system** in LangGraph on Anthropic Claude. It's a top-to-bottom rebuild of an earlier prompt-chain that fragmented diagrams into hundreds of unusable slivers.
 
-- **AI-Powered Analysis**: Intelligent extraction and structuring of medical content
-- **Multi-language Support**: Translate presentations to Turkish and other languages
-- **Image Preservation**: Maintains images and diagrams from original PDFs
-- **Professional Formatting**: Clean, medical presentation templates
-- **Medical Translation**: Proper medical terminology translation
-- **Modern UI**: Beautiful Streamlit-based user interface
+## The problem it solves
 
-## 📋 Requirements
+A schematic diagram in a PDF has no single extractable image — it's vector paths + text labels + many small raster tiles. Naively extracting embedded image objects shatters it. On the test document (`tests/fixtures/repair.pdf`, a Robbins *Tissue Repair* chapter), one figure is delivered as **2,309 tiles**.
 
-- Python 3.8+
-- Azure OpenAI API access
-- Azure Translator API access (optional, for translation features)
+| approach | figures produced | fragments |
+|---|---|---|
+| extract embedded image objects (old) | **3,214 image objects** | **3,123 sub-120px fragments (97%)** |
+| **pdfdeck** (render clustered regions) | **8 clean figures** | **0** |
 
-## 🛠️ Installation
+pdfdeck **renders page regions** instead of extracting objects — compositing every tile/path in a region into one flat image — and a vision agent verifies each crop.
 
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd PDF_to_Presentation
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Set up environment variables**:
-   Create a `.env` file in the project root with the following variables:
-   ```env
-   # Azure OpenAI Configuration
-   AZURE_OAI_ENDPOINT=your_azure_openai_endpoint_here
-   AZURE_OAI_KEY=your_azure_openai_key_here
-   AZURE_DEPLOYMENT_NAME=your_deployment_name_here
-
-   # Azure Translator Configuration (optional)
-   AZURE_TRANSLATOR_ENDPOINT=your_azure_translator_endpoint_here
-   AZURE_TRANSLATOR_KEY=your_azure_translator_key_here
-   AZURE_TRANSLATOR_REGION=your_azure_translator_region_here
-   ```
-
-## 🎯 Usage
-
-1. **Start the application**:
-   ```bash
-   streamlit run app.py
-   ```
-
-2. **Open your browser** and navigate to the provided URL (usually `http://localhost:8501`)
-
-3. **Upload a PDF** file using the file uploader
-
-4. **Configure options** in the sidebar:
-   - Select target language for translation
-   - Choose processing options
-   - Set custom presentation title
-
-5. **Click "Convert to Presentation"** to start the conversion process
-
-6. **Download** your generated PowerPoint presentation
-
-## 🔧 How It Works
-
-### 1. PDF Processing
-- Extracts text and images from PDF using PyMuPDF
-- Preserves document structure and formatting
-- Handles complex medical documents with diagrams
-
-### 2. AI Content Analysis
-- Uses Azure OpenAI to analyze medical content
-- Identifies key topics, concepts, and learning objectives
-- Structures content for optimal presentation flow
-
-### 3. Slide Generation
-- Creates professional presentation slides
-- Organizes content with proper medical terminology
-- Includes images and diagrams from original PDF
-
-### 4. Translation (Optional)
-- Translates content to target language using Azure Translator
-- Maintains medical terminology accuracy
-- Translates image descriptions and captions
-
-### 5. Presentation Assembly
-- Generates PowerPoint (.pptx) file using python-pptx
-- Applies professional medical presentation templates
-- Includes proper formatting and styling
-
-## 📁 Project Structure
+## Architecture
 
 ```
-PDF_to_Presentation/
-├── app.py                 # Main Streamlit application
-├── main_processor.py      # Orchestrator for the conversion process
-├── pdf_processor.py       # PDF text and image extraction
-├── llm_agent.py          # AI content analysis and slide generation
-├── translation_service.py # Translation functionality
-├── presentation_builder.py # PowerPoint creation
-├── config.py             # Configuration and environment setup
-├── requirements.txt      # Python dependencies
-├── example/              # Example input/output files
-│   ├── robbins-basic-pathology-10thpdf_compress-pages.pdf
-│   └── AKUT İNFLAMASYONUN MORFOLJiK PATERNLERİ.pptx
-└── output/               # Generated presentations (created automatically)
+ingest -> detect regions -> [Send fan-out] -> Figure Agent -> gather
+       -> Content Agent -> translate -> assemble (.pptx) -> QA report
 ```
 
-## 🎨 UI Features
+Two genuinely agentic loops (LangGraph subgraphs with conditional edges); everything else is deterministic.
 
-- **Modern Interface**: Clean, professional design with medical theme
-- **Real-time Progress**: Visual progress indicators during processing
-- **File Validation**: Automatic validation of uploaded PDFs
-- **Status Monitoring**: System status and configuration validation
-- **Download Integration**: Direct download of generated presentations
+- **Figure Agent** — cluster tile/drawing placement rects (mask + dilation + connected-components), render the region, then *look at the crop with Claude vision* and **retry with an adjusted bbox** if it's cut off or captures a neighbor. Bounded; falls back to best-effort / no-vision gracefully.
+- **Content Agent** — plan → draft → **fidelity critic** → revise. Every bullet cites source span IDs; a hybrid critic (deterministic citation check + LLM entailment) rejects unsupported or invented claims. No fabricated fallbacks — failures are flagged, never faked.
 
-## 🔍 Example
+Full rationale and code walkthrough: `../Supporting_Files/DECISIONS_AND_CODE_WALKTHROUGH.md`.
 
-The `example/` folder contains:
-- **Input**: `robbins-basic-pathology-10thpdf_compress-pages.pdf` - Medical pathology textbook
-- **Output**: `AKUT İNFLAMASYONUN MORFOLJiK PATERNLERİ.pptx` - Generated Turkish presentation
+## Install
 
-## 🚨 Troubleshooting
+```bash
+python -m venv .venv && .venv/Scripts/activate      # Windows; use source .venv/bin/activate elsewhere
+pip install -e ".[dev,ui]"
+cp .env.example .env                                 # then fill in ANTHROPIC_API_KEY (+ Azure Translator for --lang tr)
+```
 
-### Common Issues
+## Use
 
-1. **Azure OpenAI not configured**:
-   - Ensure all Azure OpenAI environment variables are set
-   - Verify your API key and endpoint are correct
+```bash
+pdfdeck run excerpt.pdf --lang tr           # convert + translate to Turkish
+pdfdeck run excerpt.pdf --no-vision         # deterministic figures, no vision API calls
+pdfdeck calibrate excerpt.pdf               # render candidate figure regions for inspection
+streamlit run ui/streamlit_app.py           # browser UI
+```
 
-2. **Translation not working**:
-   - Check Azure Translator configuration
-   - Verify region and endpoint settings
+Output lands in `runs/<timestamp>/`: `deck.pptx`, the rendered `figures/`, and `qa_report.json` (verification statuses, dropped/flagged figures, cost).
 
-3. **PDF processing errors**:
-   - Ensure PDF is not password-protected
-   - Check file size (recommended < 50MB)
-   - Verify PDF is not corrupted
+## Test
 
-4. **Memory issues**:
-   - Process smaller PDFs
-   - Close other applications to free memory
+```bash
+pytest                      # 77 offline tests (no API key): unit + integration + e2e-with-fakes
+pytest -m vision            # opt-in live smoke test (needs ANTHROPIC_API_KEY)
+python evals/judge.py figures tests/fixtures/repair.pdf   # the v1-vs-v2 extraction metric
+```
 
-## 🤝 Contributing
+The whole pipeline runs offline against injected Fakes, so tests need no network. `test_no_fragment_figures` is the permanent guard against the fragmentation failure returning.
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+## Configuration
 
-## 📄 License
+All tunables live in `pdfdeck/config.py` (model IDs per role, render DPI, clustering dilation radius, loop caps). Models default to `claude-opus-4-8`; the high-volume vision verification can be routed to `claude-haiku-4-5` / `claude-sonnet-5` as a cost lever.
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## Stack
 
-## 🙏 Acknowledgments
-
-- Azure OpenAI for AI capabilities
-- Azure Translator for translation services
-- Streamlit for the web interface
-- PyMuPDF for PDF processing
-- python-pptx for PowerPoint generation
+LangGraph · langchain-anthropic (Claude) · PyMuPDF + pymupdf4llm · scipy/numpy (clustering) · python-pptx · Azure Translator · Typer · Streamlit · pytest.

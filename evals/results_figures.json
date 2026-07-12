@@ -1,0 +1,9 @@
+{
+  "pdf": "tests/fixtures/repair.pdf",
+  "v1_raw_images_extracted": 3214,
+  "v1_sub120px_fragments": 3123,
+  "v1_fragment_rate": 0.972,
+  "v2_figures": 8,
+  "v2_fragments": 0,
+  "reduction_ratio": 401.8
+}
