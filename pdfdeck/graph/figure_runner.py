@@ -1,9 +1,9 @@
 """Driver around the Figure Agent subgraph.
 
-Invokes `build_figure_subgraph()` once per region, threads a shared vision
-circuit-breaker and page provider through the run config, spawns split
-children, and turns finalized states into `Figure` records while updating the
-QA report. This is the unit the top-level graph fans out over.
+`process_region` runs the verify->retry subgraph for ONE region (spawning
+split children), returning finalized figures + QA flags. It is called both by
+the sequential `run_figure_agent` (used in tests) and by the top-level
+graph's Send fan-out, so the agentic loop is defined once.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from pdfdeck.telemetry import get_logger
 log = get_logger(__name__)
 
 _MAX_SPLIT_DEPTH = 1
+_SUBGRAPH = build_figure_subgraph()  # compiled once; stateless
 
 
 def _split_bbox(bbox: Rect, split_at: float) -> tuple[Rect, Rect]:
@@ -35,19 +36,18 @@ def _split_bbox(bbox: Rect, split_at: float) -> tuple[Rect, Rect]:
     return top, bottom
 
 
-def run_figure_agent(
-    regions: list[Region],
+def process_region(
+    region: Region,
     pdf_path: str,
     run_dir: str,
     verifier: VisionVerifier,
     page_provider: PageProvider,
-    qa_report: QAReport,
-    vision_enabled: bool = True,
-    max_retries: int | None = None,
-) -> list[Figure]:
-    """Verify/refine every region; return the finalized figures."""
-    subgraph = build_figure_subgraph()
-    breaker = {"failures": 0, "limit": settings.vision_circuit_breaker}
+    page_rect: Rect,
+    vision_enabled: bool,
+    max_retries: int,
+    breaker: dict,
+) -> dict:
+    """Run the subgraph for one region. Returns figures + QA-flag lists."""
     config = {
         "configurable": {
             "page_provider": page_provider,
@@ -57,19 +57,14 @@ def run_figure_agent(
         },
         "recursion_limit": settings.graph_recursion_limit,
     }
-    max_retries = settings.max_figure_retries if max_retries is None else max_retries
-
-    page = page_provider.page(pdf_path, regions[0].page_index) if regions else None
-    page_rect = (
-        Rect(x0=0, y0=0, x1=page.rect.width, y1=page.rect.height) if page else None
-    )
-
     figures: list[Figure] = []
-    # (region, bbox, suffix, depth)
-    queue: list[tuple[Region, Rect, str, int]] = [(r, r.bbox, "", 0) for r in regions]
+    best_effort: list[str] = []
+    no_vision: list[str] = []
+    dropped: list[str] = []
 
+    queue: list[tuple[Rect, str, int]] = [(region.bbox, "", 0)]
     while queue:
-        region, bbox, suffix, depth = queue.pop(0)
+        bbox, suffix, depth = queue.pop(0)
         rid = region.id + suffix
         needs = needs_vision_verification(
             region.kind, region.classifier_confidence, region.caption is not None
@@ -89,23 +84,21 @@ def run_figure_agent(
             "max_retries": max_retries,
             "retries": 0,
         }
-        out = subgraph.invoke(state_in, config)
+        out = _SUBGRAPH.invoke(state_in, config)
         status = out.get("status")
-        qa_report.vision_calls = getattr(verifier, "calls", qa_report.vision_calls)
 
         if status == "rejected":
-            log.info("figure %s rejected by verifier: %s", rid, out.get("notes"))
+            log.info("figure %s rejected: %s", rid, out.get("notes"))
             if region.caption:
-                qa_report.dropped_captions.append(region.caption[:80])
+                dropped.append(region.caption[:80])
             continue
 
         if status == "split" and depth < _MAX_SPLIT_DEPTH and out.get("split_at"):
             top, bottom = _split_bbox(bbox, out["split_at"])
-            queue.append((region, top, f"{suffix}_t", depth + 1))
-            queue.append((region, bottom, f"{suffix}_b", depth + 1))
+            queue.append((top, f"{suffix}_t", depth + 1))
+            queue.append((bottom, f"{suffix}_b", depth + 1))
             continue
 
-        # Map terminal statuses -> a persisted VerificationStatus.
         vstatus = {
             VerificationStatus.VERIFIED.value: VerificationStatus.VERIFIED,
             VerificationStatus.BEST_EFFORT.value: VerificationStatus.BEST_EFFORT,
@@ -114,9 +107,9 @@ def run_figure_agent(
         }.get(status, VerificationStatus.BEST_EFFORT)
 
         if vstatus == VerificationStatus.BEST_EFFORT:
-            qa_report.best_effort_figures.append(rid)
+            best_effort.append(rid)
         elif vstatus == VerificationStatus.NO_VISION:
-            qa_report.no_vision_figures.append(rid)
+            no_vision.append(rid)
 
         figures.append(
             Figure(
@@ -129,6 +122,33 @@ def run_figure_agent(
                 status=vstatus,
             )
         )
+    return {"figures": figures, "best_effort": best_effort, "no_vision": no_vision, "dropped": dropped}
 
+
+def run_figure_agent(
+    regions: list[Region],
+    pdf_path: str,
+    run_dir: str,
+    verifier: VisionVerifier,
+    page_provider: PageProvider,
+    qa_report: QAReport,
+    vision_enabled: bool = True,
+    max_retries: int | None = None,
+) -> list[Figure]:
+    """Sequential driver: process every region, merge QA flags. Used in tests."""
+    max_retries = settings.max_figure_retries if max_retries is None else max_retries
+    breaker = {"failures": 0, "limit": settings.vision_circuit_breaker}
+    page = page_provider.page(pdf_path, regions[0].page_index) if regions else None
+    page_rect = Rect(x0=0, y0=0, x1=page.rect.width, y1=page.rect.height) if page else None
+
+    figures: list[Figure] = []
+    for region in regions:
+        r = process_region(region, pdf_path, run_dir, verifier, page_provider,
+                            page_rect, vision_enabled, max_retries, breaker)
+        figures.extend(r["figures"])
+        qa_report.best_effort_figures.extend(r["best_effort"])
+        qa_report.no_vision_figures.extend(r["no_vision"])
+        qa_report.dropped_captions.extend(r["dropped"])
+    qa_report.vision_calls = getattr(verifier, "calls", qa_report.vision_calls)
     figures.sort(key=lambda f: (f.page_index, f.region_id))
     return figures
