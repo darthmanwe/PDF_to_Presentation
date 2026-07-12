@@ -93,17 +93,20 @@ class ClaudeVisionVerifier:
         from langchain_anthropic import ChatAnthropic
 
         self.model = model or settings.vision_model
-        kwargs: dict = {"model": self.model, "temperature": 0, "max_tokens": 1024}
+        # No `temperature`: removed on Opus 4.8 / 4.7 (API returns 400).
+        kwargs: dict = {"model": self.model, "max_tokens": 1024}
         key = api_key or settings.anthropic_api_key
         if key:  # else ChatAnthropic reads ANTHROPIC_API_KEY from the env
             kwargs["api_key"] = key
         self._llm = ChatAnthropic(**kwargs).with_structured_output(VerificationResult)
-        self.last_usage: dict | None = None
+        self.calls = 0
 
     def verify(
         self, image_path: str, expected_caption: Optional[str], kind: str
     ) -> VerificationResult:
         from langchain_core.messages import HumanMessage, SystemMessage
+
+        self.calls += 1
 
         with open(image_path, "rb") as f:
             b64 = base64.standard_b64encode(f.read()).decode("ascii")

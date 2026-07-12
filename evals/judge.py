@@ -88,7 +88,7 @@ def content_fidelity(run_dir: str, source_pdf: str) -> dict:
     pages, _ = ingest_pdf(source_pdf)
     source, _ = build_source_blocks(pages)
 
-    llm = ChatAnthropic(model=settings.critic_model, temperature=0,
+    llm = ChatAnthropic(model=settings.critic_model,
                         max_tokens=2048).with_structured_output(Scores)
     system = ("You are grading student slides generated from a medical textbook "
               "excerpt. Score strictly against the source; reward grounding and "

@@ -86,9 +86,14 @@ class FidelityCritic(Protocol):
 def _chat(model: str):
     from langchain_anthropic import ChatAnthropic
 
-    # Only pass api_key when we actually have one; otherwise let ChatAnthropic
-    # read ANTHROPIC_API_KEY from the environment (passing None fails validation).
-    kwargs: dict = {"model": model, "temperature": 0, "max_tokens": 8192}
+    # NOTE: no `temperature` -- it is removed on Opus 4.8 / 4.7 (the API returns
+    # 400 "temperature is deprecated for this model"). Determinism comes from the
+    # task shape + structured output, not a sampling param. Omitting `thinking`
+    # runs Opus 4.8 without extended thinking (fast, cheap) -- right for these
+    # extraction/critique calls.
+    # Only pass api_key when we have one; else ChatAnthropic reads the env
+    # (passing None fails validation).
+    kwargs: dict = {"model": model, "max_tokens": 8192}
     if settings.anthropic_api_key:
         kwargs["api_key"] = settings.anthropic_api_key
     return ChatAnthropic(**kwargs)

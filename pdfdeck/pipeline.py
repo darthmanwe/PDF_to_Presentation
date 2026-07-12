@@ -31,6 +31,30 @@ class ConversionResult:
     figures: list
 
 
+def _finalize_cost(report: QAReport, usage_metadata: dict, run_dir: str) -> None:
+    """Sum per-model token usage into the QA report and re-write the json."""
+    import json
+    import os
+
+    from pdfdeck.telemetry import estimate_cost_usd
+
+    total_in = total_out = 0
+    cost = 0.0
+    for model, usage in (usage_metadata or {}).items():
+        in_tok = usage.get("input_tokens", 0)
+        out_tok = usage.get("output_tokens", 0)
+        total_in += in_tok
+        total_out += out_tok
+        cost += estimate_cost_usd(model, in_tok, out_tok)
+    report.llm_input_tokens = total_in
+    report.llm_output_tokens = total_out
+    report.cost_estimate_usd = round(cost, 4)
+    path = os.path.join(run_dir, "qa_report.json")
+    if os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(report.model_dump(), f, indent=2)
+
+
 def convert_pdf(
     pdf_path: str,
     target_language: Optional[str] = None,
@@ -91,7 +115,14 @@ def convert_pdf(
 
     graph = build_pipeline()
     try:
-        final = graph.invoke(state_in, config)
+        # Capture token usage across every LLM call in the run (content agent,
+        # critic, vision verifier) via contextvars -- works through
+        # with_structured_output, which otherwise hides the raw usage.
+        from langchain_core.callbacks import get_usage_metadata_callback
+
+        with get_usage_metadata_callback() as usage_cb:
+            final = graph.invoke(state_in, config)
+        _finalize_cost(report, usage_cb.usage_metadata, run_dir)
     finally:
         if owns_provider:
             provider.close()

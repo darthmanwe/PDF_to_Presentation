@@ -34,4 +34,9 @@ def get_logger(name: str) -> logging.Logger:
 
 def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     inp, out = MODEL_PRICING_USD.get(model, (0.0, 0.0))
+    if (inp, out) == (0.0, 0.0):  # tolerate version suffixes (e.g. dated snapshots)
+        for known, price in MODEL_PRICING_USD.items():
+            if model.startswith(known):
+                inp, out = price
+                break
     return (input_tokens * inp + output_tokens * out) / 1_000_000
