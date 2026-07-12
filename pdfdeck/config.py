@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     min_region_area_pt2: float = 900.0  # discard specks (< ~30x30pt regions)
     label_text_max_words: int = 6      # text blocks absorbable into a region
     full_width_col_frac: float = 1.2   # region wider than this x column width => full-width
+    qualify_min_drawings: int = 10     # drawings-only region needs >= this many to be a figure
 
     # --- Classification ----------------------------------------------------
     photo_max_rects: int = 8       # <= this many source rects can still be a photo

@@ -1,0 +1,16 @@
+{
+  "_comment": "Ground truth for repair.pdf, established by visual inspection of rendered candidate regions during Phase 1b calibration (see evals/calibrate_oracle.py + runs/calibration/). One complete figure per page; the two drawings-only shaded text boxes (p6 MORPHOLOGY, p8 RAPID REVIEW) are correctly rejected. Tests assert INSPECTED reality, not assumptions.",
+  "pdf_sha_prefix": "cb167a8fe2c5",
+  "total_pages": 8,
+  "total_figures": 8,
+  "pages": {
+    "0": {"regions": 1, "kind": "diagram", "note": "wound-healing 3-panel skin diagram (~4629 tiles)"},
+    "1": {"regions": 1, "kind": "diagram", "figure_no": "2.10", "note": "Growth Factors table (drawings-only, 18 rects)"},
+    "2": {"regions": 1, "kind": "diagram", "min_source_rects": 2000, "note": "the 8133-tile wound-healing diagram: the fragmentation stress case"},
+    "3": {"regions": 1, "kind": "diagram", "note": "persistent-injury fibrosis flow diagram"},
+    "4": {"regions": 1, "kind": "diagram", "note": "diagram (~6171 tiles)"},
+    "5": {"regions": 1, "kind": "photo", "note": "2-panel histology micrograph; MORPHOLOGY text box rejected"},
+    "6": {"regions": 1, "kind": "photo", "note": "6-panel A-F ulcer/histology figure"},
+    "7": {"regions": 1, "kind": "photo", "max_bbox_x1": 300, "note": "keloid A/B/C, left column only; RAPID REVIEW text box rejected"}
+  }
+}
