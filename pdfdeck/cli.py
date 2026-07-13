@@ -19,19 +19,28 @@ log = get_logger(__name__)
 def run(
     pdf: str = typer.Argument(..., help="Input PDF path"),
     lang: str = typer.Option("en", "--lang", help="Target language (en = no translation, tr = Turkish)"),
+    also: str = typer.Option(
+        None, "--also",
+        help="Also emit these languages as extra decks, comma-separated (e.g. 'tr'). "
+             "Reuses the same expensive run -- only translation cost is added.",
+    ),
     no_vision: bool = typer.Option(False, "--no-vision", help="Skip vision verification (deterministic)"),
     out: str = typer.Option(None, "--out", help="Output .pptx path (default: runs/<ts>/deck.pptx)"),
 ):
     """Convert a PDF excerpt into a presentation deck."""
     from pdfdeck.pipeline import convert_pdf
 
+    extra = [x.strip() for x in also.split(",") if x.strip()] if also else None
     result = convert_pdf(
         pdf,
         target_language=None if lang == "en" else lang,
         vision_enabled=not no_vision,
         output_path=out,
+        extra_languages=extra,
     )
     typer.echo(f"\nDeck:   {result.output_path}")
+    for lang_code, path in result.extra_outputs.items():
+        typer.echo(f"  +{lang_code}: {path}")
     typer.echo(f"Run:    {result.run_dir}")
     typer.echo(f"Slides: {len(result.slides)}  Figures: {len(result.figures)}")
     r = result.report

@@ -51,6 +51,8 @@ class ConversionResult:
     report: QAReport
     slides: list = field(default_factory=list)
     figures: list = field(default_factory=list)
+    # lang code -> pptx path for extra language variants (translation-only cost).
+    extra_outputs: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -150,12 +152,41 @@ def _result(run: _Run, state: dict) -> ConversionResult:
     )
 
 
+def _emit_extra_languages(
+    run: _Run, english_slides: list, languages, primary_output: str, topic: str
+) -> dict:
+    """Assemble one extra deck per language from the already-finalized English
+    slides. Reuses the rendered figures on disk and pays only Azure Translator
+    cost -- the expensive vision + content stages ran exactly once."""
+    from pdfdeck.pptx.builder import DeckBuilder
+    from pdfdeck.translation.translate_slides import translate_slides
+
+    translator = run.config["configurable"].get("translator")
+    if translator is not None and hasattr(translator, "is_configured") \
+            and not translator.is_configured():
+        log.warning("extra languages requested but translator not configured; skipping")
+        return {}
+
+    base, ext = os.path.splitext(primary_output)
+    outputs: dict = {}
+    for lang in languages:
+        if not lang or lang == "en":
+            continue
+        slides = translate_slides(english_slides, lang, translator)
+        out = f"{base}_{lang}{ext}"
+        DeckBuilder().build(slides, out, subtitle=topic)
+        outputs[lang] = out
+        log.info("extra-language deck (%s): %s", lang, out)
+    return outputs
+
+
 def convert_pdf(
     pdf_path: str,
     target_language: Optional[str] = None,
     vision_enabled: bool = True,
     output_path: Optional[str] = None,
     run_dir: Optional[str] = None,
+    extra_languages: Optional[list] = None,
     *,
     verifier=None,
     content_agent=None,
@@ -163,6 +194,10 @@ def convert_pdf(
     translator=None,
     page_provider: Optional[PageProvider] = None,
 ) -> ConversionResult:
+    """Convert a PDF into a deck. `extra_languages` emits additional translated
+    decks from the same English content (translation-only cost) -- run this with
+    an English primary (`target_language=None`) to get e.g. English + Turkish
+    without paying for the vision + content stages twice."""
     run = _prepare(pdf_path, target_language, vision_enabled, output_path, run_dir,
                    verifier, content_agent, critic, translator, page_provider)
     try:
@@ -171,10 +206,22 @@ def convert_pdf(
         with get_usage_metadata_callback() as usage_cb:
             final = run.graph.invoke(run.state_in, run.config)
         _finalize_cost(run.report, usage_cb.usage_metadata, run.run_dir)
+        result = _result(run, final)
+        if extra_languages:
+            if target_language not in (None, "en"):
+                log.warning(
+                    "extra_languages translates from the primary-language deck "
+                    "(%s), not English; run English-primary for clean variants",
+                    target_language,
+                )
+            result.extra_outputs = _emit_extra_languages(
+                run, result.slides, extra_languages,
+                result.output_path, final.get("topic", "Medical Education"),
+            )
     finally:
         if run.owns_provider:
             run.provider.close()
-    return _result(run, final)
+    return result
 
 
 def iter_convert(

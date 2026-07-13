@@ -41,17 +41,20 @@ cp .env.example .env                                 # then fill in ANTHROPIC_AP
 
 ```bash
 pdfdeck run excerpt.pdf --lang tr           # convert + translate to Turkish
+pdfdeck run excerpt.pdf --also tr           # English deck + a Turkish deck from ONE run
 pdfdeck run excerpt.pdf --no-vision         # deterministic figures, no vision API calls
 pdfdeck calibrate excerpt.pdf               # render candidate figure regions for inspection
 streamlit run ui/streamlit_app.py           # browser UI
 ```
 
-Output lands in `runs/<timestamp>/`: `deck.pptx`, the rendered `figures/`, and `qa_report.json` (verification statuses, dropped/flagged figures, cost).
+`--also` is the cost-efficient way to ship multiple languages: the expensive vision + content stages run **once** (in English), then each extra language is just a cheap Azure Translator pass over the finalized slides, reusing the already-rendered figures. One 8-page run produced both an English and a Turkish deck for **$0.89** (vs ~$1.77 for two separate runs).
+
+Output lands in `runs/<timestamp>/`: `<pdf>_<timestamp>.pptx` (plus `<pdf>_<timestamp>_<lang>.pptx` for each `--also` language), the rendered `figures/`, and `qa_report.json` (verification statuses, dropped/flagged figures, cost).
 
 ## Test
 
 ```bash
-pytest                      # 77 offline tests (no API key): unit + integration + e2e-with-fakes
+pytest                      # 84 offline tests (no API key): unit + integration + e2e-with-fakes
 pytest -m vision            # opt-in live smoke test (needs ANTHROPIC_API_KEY)
 python evals/judge.py figures tests/fixtures/repair.pdf   # the v1-vs-v2 extraction metric
 ```

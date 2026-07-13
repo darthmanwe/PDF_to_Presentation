@@ -111,6 +111,37 @@ def test_translation_applied(tmp_path):
     assert all(b.startswith("[tr] ") for s in text_slides for b in s.bullets)
 
 
+def test_extra_languages_emits_second_deck_from_one_run(tmp_path):
+    """English primary + extra_languages=['tr'] yields two openable decks from a
+    single (expensive) run: the English content is translated for the extra."""
+    result = convert_pdf(
+        PDF,
+        target_language=None,  # English primary
+        vision_enabled=False,  # deterministic figures, faster
+        run_dir=str(tmp_path),
+        extra_languages=["tr", "en"],  # 'en' is a no-op and must be skipped
+        verifier=_AcceptAllVerifier(),
+        content_agent=_content_agent(),
+        critic=FakeFidelityCritic([CritiqueReport(approved=True)]),
+        translator=_FakeTranslator(),
+    )
+
+    # English deck (primary) is untranslated.
+    text_slides = [s for s in result.slides if s.slide_type == "text"]
+    assert text_slides
+    assert not any(b.startswith("[tr] ") for s in text_slides for b in s.bullets)
+
+    # Exactly one extra deck (tr); 'en' was skipped.
+    assert list(result.extra_outputs) == ["tr"]
+    tr_path = result.extra_outputs["tr"]
+    assert os.path.exists(tr_path)
+    assert tr_path != result.output_path
+    assert os.path.exists(result.output_path)
+
+    # The extra deck re-opens with the same slide count as the English one.
+    assert len(list(Presentation(tr_path).slides)) == len(list(Presentation(result.output_path).slides))
+
+
 def test_no_vision_mode_makes_no_verifier_calls(tmp_path):
     v = _AcceptAllVerifier()
     convert_pdf(
