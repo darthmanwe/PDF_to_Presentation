@@ -13,6 +13,7 @@ from typing import Optional, Protocol
 from pydantic import BaseModel, Field
 
 from pdfdeck.agents import prompts
+from pdfdeck.agents.llm import structured_llm
 from pdfdeck.config import settings
 
 
@@ -83,22 +84,6 @@ class FidelityCritic(Protocol):
 # Claude implementations
 # --------------------------------------------------------------------------
 
-def _chat(model: str):
-    from langchain_anthropic import ChatAnthropic
-
-    # NOTE: no `temperature` -- it is removed on Opus 4.8 / 4.7 (the API returns
-    # 400 "temperature is deprecated for this model"). Determinism comes from the
-    # task shape + structured output, not a sampling param. Omitting `thinking`
-    # runs Opus 4.8 without extended thinking (fast, cheap) -- right for these
-    # extraction/critique calls.
-    # Only pass api_key when we have one; else ChatAnthropic reads the env
-    # (passing None fails validation).
-    kwargs: dict = {"model": model, "max_tokens": 8192}
-    if settings.anthropic_api_key:
-        kwargs["api_key"] = settings.anthropic_api_key
-    return ChatAnthropic(**kwargs)
-
-
 def _figures_block(figures: list[FigureRef]) -> str:
     if not figures:
         return "(no figures available)"
@@ -113,9 +98,9 @@ def _figures_block(figures: list[FigureRef]) -> str:
 class ClaudeContentAgent:
     def __init__(self, model: str | None = None):
         self.model = model or settings.content_model
-        self._plan = _chat(self.model).with_structured_output(Outline)
-        self._draft = _chat(self.model).with_structured_output(DraftBundle)
-        self._revise = _chat(self.model).with_structured_output(DraftBundle)
+        self._plan = structured_llm(Outline, self.model)
+        self._draft = structured_llm(DraftBundle, self.model)
+        self._revise = structured_llm(DraftBundle, self.model)
 
     def plan_outline(self, source_blocks: str, figures: list[FigureRef]) -> Outline:
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -153,7 +138,7 @@ class ClaudeContentAgent:
 class ClaudeFidelityCritic:
     def __init__(self, model: str | None = None):
         self.model = model or settings.critic_model
-        self._critic = _chat(self.model).with_structured_output(CritiqueReport)
+        self._critic = structured_llm(CritiqueReport, self.model)
 
     def critique(self, drafts: DraftBundle, source_blocks: str, history: str) -> CritiqueReport:
         from langchain_core.messages import HumanMessage, SystemMessage

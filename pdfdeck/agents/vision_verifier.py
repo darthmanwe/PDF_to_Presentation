@@ -89,16 +89,12 @@ _PROMPT = (
 class ClaudeVisionVerifier:
     """Anthropic-backed verifier via langchain-anthropic structured output."""
 
-    def __init__(self, model: str | None = None, api_key: str | None = None):
-        from langchain_anthropic import ChatAnthropic
+    def __init__(self, model: str | None = None):
+        from pdfdeck.agents.llm import structured_llm
 
         self.model = model or settings.vision_model
-        # No `temperature`: removed on Opus 4.8 / 4.7 (API returns 400).
-        kwargs: dict = {"model": self.model, "max_tokens": 1024}
-        key = api_key or settings.anthropic_api_key
-        if key:  # else ChatAnthropic reads ANTHROPIC_API_KEY from the env
-            kwargs["api_key"] = key
-        self._llm = ChatAnthropic(**kwargs).with_structured_output(VerificationResult)
+        # Retries + model fallback on overload are handled inside structured_llm.
+        self._llm = structured_llm(VerificationResult, self.model, max_tokens=1024)
         self.calls = 0
 
     def verify(

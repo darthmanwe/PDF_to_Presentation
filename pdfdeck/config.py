@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     content_model: str = "claude-opus-4-8"  # outline + slide drafting
     critic_model: str = "claude-opus-4-8"   # fidelity critique
 
+    # --- Reliability: retries + model fallback on overload ----------------
+    llm_max_retries: int = 4          # SDK exponential backoff per call (429 / 5xx / 529)
+    model_fallback_enabled: bool = True
+    fallback_model: str = "claude-sonnet-5"  # retried on if the primary stays overloaded
+
     # --- Rendering --------------------------------------------------------
     render_dpi: int = 300          # deck-quality region renders
     fallback_page_dpi: int = 150   # full-page fallback slide renders
