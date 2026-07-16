@@ -37,7 +37,10 @@ class PlannedSlide(BaseModel):
 
 
 class Outline(BaseModel):
-    topic: str = Field(description="chapter topic for the title slide")
+    # Optional on purpose: a model (esp. a fallback model) may omit it, and a
+    # missing topic must not crash the run -- content_runner falls back to the
+    # PDF-derived topic. See run_content_agent.
+    topic: str = Field(default="", description="chapter topic for the title slide")
     slides: list[PlannedSlide] = Field(default_factory=list)
 
 

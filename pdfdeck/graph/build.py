@@ -131,7 +131,8 @@ def _content(state: PipelineState, config: RunnableConfig) -> dict:
     report: QAReport = cfg["report"]
     figures = sorted(state.get("figures", []), key=lambda f: (f.page_index, f.region_id))
     slides = run_content_agent(
-        state["pages"], figures, cfg["content_agent"], cfg["critic"], report
+        state["pages"], figures, cfg["content_agent"], cfg["critic"], report,
+        fallback_topic=state.get("topic", ""),
     )
     return {"slides": slides}
 

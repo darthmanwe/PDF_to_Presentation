@@ -152,6 +152,25 @@ def test_best_effort_figure_flagged_on_slide():
     assert "best_effort" in fig_slide.flags
 
 
+# --- topic robustness (a model may omit the required-looking field) --------
+
+def test_outline_tolerates_missing_topic():
+    # A fallback model once returned slides but no topic; that must not crash.
+    o = Outline(slides=[PlannedSlide(title="Intro", kind="title")])
+    assert o.topic == ""
+
+
+def test_missing_topic_uses_fallback_topic():
+    agent = FakeContentAgent(
+        Outline(slides=[PlannedSlide(title="Intro", kind="title")]), [_draft()]
+    )
+    critic = FakeFidelityCritic([CritiqueReport(approved=True)])
+    qa = QAReport()
+    slides = run_content_agent(PAGES, [], agent, critic, qa, fallback_topic="Repair Chapter")
+    title = next(s for s in slides if s.slide_type == "title")
+    assert title.title == "Repair Chapter"  # fell back to the PDF-derived topic
+
+
 def test_garbled_page_excluded_from_source():
     from pdfdeck.graph.content_runner import build_source_blocks
     good = _page(0, ["Clean readable text about repair."])

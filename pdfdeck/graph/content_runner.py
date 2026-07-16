@@ -61,6 +61,7 @@ def run_content_agent(
     critic: FidelityCritic,
     qa_report: QAReport,
     max_revisions: int | None = None,
+    fallback_topic: str = "",
 ) -> list[SlideSpec]:
     """Generate grounded slides and interleave figures (conservation enforced)."""
     source_blocks, span_ids = build_source_blocks(pages)
@@ -87,7 +88,8 @@ def run_content_agent(
     out = subgraph.invoke(state_in, config)
 
     drafts = out["drafts"]
-    topic = out["outline"].topic if out.get("outline") else "Medical Presentation"
+    outline_topic = out["outline"].topic if out.get("outline") else ""
+    topic = outline_topic or fallback_topic or "Medical Presentation"
     forced_flag = ["critic_forced_accept"] if out.get("forced_accept") else []
 
     slides: list[SlideSpec] = []

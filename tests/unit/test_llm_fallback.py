@@ -77,3 +77,28 @@ def test_non_transient_error_not_swallowed(monkeypatch):
     with pytest.raises(ValueError):
         chain.invoke("x")
     assert seen == ["claude-opus-4-8"]  # fallback NOT tried on a non-transient error
+
+
+def test_bind_retries_on_validation_error(monkeypatch):
+    """A structured call that omits a required field (pydantic ValidationError)
+    is re-sampled once by _bind's retry wrapper, then succeeds."""
+
+    class _Req(BaseModel):
+        topic: str  # required -- constructing without it raises ValidationError
+
+    attempts = {"n": 0}
+
+    class _FakeLLM:
+        def with_structured_output(self, schema):
+            def run(_):
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    schema()            # missing 'topic' -> ValidationError
+                return schema(topic="ok")
+            return RunnableLambda(run)
+
+    monkeypatch.setattr(llm_mod, "_chat", lambda model, max_tokens: _FakeLLM())
+
+    out = llm_mod._bind("m", _Req, 100).invoke("x")
+    assert out.topic == "ok"
+    assert attempts["n"] == 2  # first attempt failed validation, retried once

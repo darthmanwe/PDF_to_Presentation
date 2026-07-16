@@ -10,16 +10,20 @@ lives in one place:
    server error after its retries, LangChain's `with_fallbacks` retries the same
    call on a secondary model (`settings.fallback_model`). So a 529 storm on Opus
    degrades to Sonnet instead of aborting the whole run.
+3. **Validation retry** -- if a model returns a tool call that omits a required
+   field (a pydantic ValidationError -- observed live when the Sonnet fallback
+   dropped `topic`), the call is re-sampled once before giving up. Different
+   models interpret a schema differently, so this guards every structured call.
 
-Non-transient errors (bad request, schema-validation failures) are deliberately
-NOT caught here -- they should surface, not silently downgrade to another model.
+Other non-transient errors (bad request, auth) are deliberately NOT caught here
+-- they should surface, not silently downgrade to another model.
 """
 
 from __future__ import annotations
 
 from typing import Type
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pdfdeck.config import settings
 
@@ -51,8 +55,18 @@ def _chat(model: str, max_tokens: int):
 
 def _bind(model: str, schema: Type[BaseModel], max_tokens: int):
     """One structured-output client for `model`. Kept separate as the seam the
-    fallback wiring (and its test) compose over."""
-    return _chat(model, max_tokens).with_structured_output(schema)
+    fallback wiring (and its test) compose over.
+
+    Wrapped in a validation retry: models occasionally return a tool call that
+    omits a required field (observed live -- a fallback model dropped `topic`),
+    which surfaces as a pydantic ValidationError. Retrying re-samples the call;
+    the wait is disabled because a schema miss isn't a rate/capacity issue."""
+    structured = _chat(model, max_tokens).with_structured_output(schema)
+    return structured.with_retry(
+        retry_if_exception_type=(ValidationError,),
+        stop_after_attempt=2,
+        wait_exponential_jitter=False,
+    )
 
 
 def structured_llm(
