@@ -31,11 +31,24 @@ Full rationale and code walkthrough: `../Supporting_Files/DECISIONS_AND_CODE_WAL
 
 ## Install
 
-```bash
-python -m venv .venv && .venv/Scripts/activate      # Windows; use source .venv/bin/activate elsewhere
+**Windows (PowerShell)** — run each line separately; PowerShell has no `&&`:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1        # if blocked: Set-ExecutionPolicy -Scope Process Bypass  (or use .venv\Scripts\activate.bat in cmd)
 pip install -e ".[dev,ui]"
-cp .env.example .env                                 # then fill in ANTHROPIC_API_KEY (+ Azure Translator for --lang tr)
+Copy-Item .env.example .env       # then fill in ANTHROPIC_API_KEY (+ Azure Translator for --lang tr)
 ```
+
+**macOS / Linux:**
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev,ui]"
+cp .env.example .env              # then fill in ANTHROPIC_API_KEY (+ Azure Translator for --lang tr)
+```
+
+> Not sure the venv is active? Its name shows in your prompt, or `python -c "import sys; print(sys.prefix)"` should point inside `.venv`. You can always skip activation and call tools directly: `.venv\Scripts\streamlit.exe run ui/streamlit_app.py`, `.venv\Scripts\pytest.exe`, etc.
 
 ## Use
 
