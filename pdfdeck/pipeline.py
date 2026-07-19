@@ -41,6 +41,7 @@ NODE_LABELS = {
     "translate": "Translating",
     "assemble": "Building the presentation",
     "qa": "Finalizing and writing the QA report",
+    "emit_extra": "Translating and building the extra-language deck",
 }
 
 
@@ -230,6 +231,7 @@ def iter_convert(
     vision_enabled: bool = True,
     output_path: Optional[str] = None,
     run_dir: Optional[str] = None,
+    extra_languages: Optional[list] = None,
     *,
     verifier=None,
     content_agent=None,
@@ -239,7 +241,12 @@ def iter_convert(
 ) -> Iterator[tuple]:
     """Stream the pipeline. Yields ('node', name) per graph step, then
     ('done', ConversionResult). Reconstructs final state from the update
-    stream, honoring the fan-out reducers."""
+    stream, honoring the fan-out reducers.
+
+    `extra_languages` mirrors `convert_pdf`: after the primary deck is built it
+    emits one translated sibling deck per language (translation-only cost),
+    reusing the already-rendered figures. Run English-primary
+    (`target_language=None`) for clean variants."""
     run = _prepare(pdf_path, target_language, vision_enabled, output_path, run_dir,
                    verifier, content_agent, critic, translator, page_provider)
     acc = dict(run.state_in)
@@ -259,4 +266,18 @@ def iter_convert(
     finally:
         if run.owns_provider:
             run.provider.close()
-    yield ("done", _result(run, acc))
+
+    result = _result(run, acc)
+    if extra_languages:
+        if target_language not in (None, "en"):
+            log.warning(
+                "extra_languages translates from the primary-language deck "
+                "(%s), not English; run English-primary for clean variants",
+                target_language,
+            )
+        yield ("node", "emit_extra")
+        result.extra_outputs = _emit_extra_languages(
+            run, result.slides, extra_languages,
+            result.output_path, acc.get("topic", "Medical Education"),
+        )
+    yield ("done", result)

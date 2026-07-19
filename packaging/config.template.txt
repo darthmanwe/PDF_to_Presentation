@@ -1,0 +1,10 @@
+# pdfdeck ayar dosyasi -- BU DOSYAYI SILMEYIN.
+# pdfdeck settings file -- DO NOT DELETE THIS FILE.
+#
+# The build script fills these in from the developer's .env.
+# Format: KEY=value (no quotes, no spaces around =).
+
+ANTHROPIC_API_KEY=
+AZURE_TRANSLATOR_KEY=
+AZURE_TRANSLATOR_ENDPOINT=
+AZURE_TRANSLATOR_REGION=

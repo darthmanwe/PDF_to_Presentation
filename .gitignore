@@ -3,6 +3,9 @@
 .env.*
 *.env
 !.env.example
+# The frozen desktop app's filled key file (real keys, injected at build time
+# into dist/). The empty packaging/config.template.txt stays tracked as the example.
+pdfdeck.config.txt
 
 # Python
 __pycache__/
@@ -18,6 +21,7 @@ venv/
 build/
 dist/
 *.spec
+!packaging/*.spec
 *.rar
 
 # Generated output

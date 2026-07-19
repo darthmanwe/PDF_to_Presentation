@@ -64,10 +64,35 @@ streamlit run ui/streamlit_app.py           # browser UI
 
 Output lands in `runs/<timestamp>/`: `<pdf>_<timestamp>.pptx` (plus `<pdf>_<timestamp>_<lang>.pptx` for each `--also` language), the rendered `figures/`, and `qa_report.json` (verification statuses, dropped/flagged figures, cost).
 
+## Desktop app (no-install, for non-technical users)
+
+For someone who shouldn't have to touch Python, there's a packaged Windows app: a small
+Tkinter GUI (pick a PDF → choose language → native *Save As* → progress → *Open deck*)
+frozen with PyInstaller into a one-folder build. They extract a zip and double-click
+`PDFDeck.exe` — no Python, no pip, no terminal.
+
+Build it (Windows, from the repo root, with a filled `.env`):
+
+```powershell
+.\packaging\build.ps1
+```
+
+That reads the API keys from your `.env`, injects them **only** into the build output
+(`packaging/dist/pdfdeck-2.0.0/pdfdeck.config.txt`, which is git-ignored), runs the frozen
+app's `--selftest`, and produces `packaging/dist/pdfdeck-2.0.0-win64.zip` (~145 MB — it
+bundles PyMuPDF's ONNX layout models). Hand that zip over; the recipient extracts it and
+runs `PDFDeck.exe`.
+
+Key handling: the repo tracks only the empty [`packaging/config.template.txt`](packaging/config.template.txt)
+as the example — real keys live solely in the git-ignored `dist/`. See
+[`packaging/`](packaging/) for the GUI entry point, the PyInstaller spec, and the build
+script. Use `.\packaging\build.ps1 -Console` for a console build when diagnosing a missing
+module.
+
 ## Test
 
 ```bash
-pytest                      # 84 offline tests (no API key): unit + integration + e2e-with-fakes
+pytest                      # 91 offline tests (no API key): unit + integration + e2e-with-fakes
 pytest -m vision            # opt-in live smoke test (needs ANTHROPIC_API_KEY)
 python evals/judge.py figures tests/fixtures/repair.pdf   # the v1-vs-v2 extraction metric
 ```
@@ -80,4 +105,4 @@ All tunables live in `pdfdeck/config.py` (model IDs per role, render DPI, cluste
 
 ## Stack
 
-LangGraph · langchain-anthropic (Claude) · PyMuPDF + pymupdf4llm · scipy/numpy (clustering) · python-pptx · Azure Translator · Typer · Streamlit · pytest.
+LangGraph · langchain-anthropic (Claude) · PyMuPDF + pymupdf4llm · scipy/numpy (clustering) · python-pptx · Azure Translator · Typer · Streamlit · Tkinter + PyInstaller (desktop app) · pytest.

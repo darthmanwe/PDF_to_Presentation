@@ -21,7 +21,7 @@ from pdfdeck.agents.content_agent import (
     PlannedSlide,
 )
 from pdfdeck.agents.vision_verifier import FakeVisionVerifier, Verdict, VerificationResult
-from pdfdeck.pipeline import convert_pdf
+from pdfdeck.pipeline import convert_pdf, iter_convert
 
 pytestmark = pytest.mark.integration
 
@@ -140,6 +140,40 @@ def test_extra_languages_emits_second_deck_from_one_run(tmp_path):
 
     # The extra deck re-opens with the same slide count as the English one.
     assert len(list(Presentation(tr_path).slides)) == len(list(Presentation(result.output_path).slides))
+
+
+def test_iter_convert_streams_extra_language_deck(tmp_path):
+    """The streaming entrypoint mirrors convert_pdf: extra_languages emits an
+    'emit_extra' progress event and a translated sibling deck, so the GUI keeps
+    live progress while still producing the English + Turkish pair."""
+    events = list(
+        iter_convert(
+            PDF,
+            target_language=None,  # English primary
+            vision_enabled=False,  # deterministic figures, faster
+            run_dir=str(tmp_path),
+            extra_languages=["tr"],
+            verifier=_AcceptAllVerifier(),
+            content_agent=_content_agent(),
+            critic=FakeFidelityCritic([CritiqueReport(approved=True)]),
+            translator=_FakeTranslator(),
+        )
+    )
+
+    kinds = [k for k, _ in events]
+    assert kinds[-1] == "done"
+    assert events[-1][0] == "done"
+    # The extra-language step surfaced as a progress node (GUI status line).
+    node_names = [payload for kind, payload in events if kind == "node"]
+    assert "emit_extra" in node_names
+
+    result = events[-1][1]
+    assert list(result.extra_outputs) == ["tr"]
+    tr_path = result.extra_outputs["tr"]
+    assert tr_path.endswith("_tr.pptx")
+    assert os.path.exists(tr_path)
+    assert os.path.exists(result.output_path)
+    assert tr_path != result.output_path
 
 
 def test_no_vision_mode_makes_no_verifier_calls(tmp_path):
